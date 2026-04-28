@@ -9,3 +9,5 @@ models/
 *.onnx
 .env
 .DS_Store
+*.pdf
+data/

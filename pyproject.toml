@@ -1,7 +1,7 @@
 [project]
 name = "redact"
 version = "0.1.0"
-description = "Add your description here"
+description = "On-Device Neural Redaction for Safe LLM Pasting"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
@@ -14,4 +14,10 @@ dependencies = [
     "torch>=2.11.0",
     "transformers>=5.6.0",
     "wandb>=0.26.0",
+]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.2.0",
+    "jupyter>=1.1.1",
 ]
