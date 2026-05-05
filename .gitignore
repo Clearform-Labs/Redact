@@ -11,3 +11,5 @@ models/
 .DS_Store
 *.pdf
 data/
+wandb/
+checkpoints/

@@ -10,6 +10,7 @@ dependencies = [
     "evaluate>=0.4.6",
     "onnx>=1.21.0",
     "onnxruntime>=1.24.4",
+    "onnxscript>=0.7.0",
     "seqeval>=1.2.2",
     "torch>=2.11.0",
     "transformers>=5.6.0",
