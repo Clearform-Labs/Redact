@@ -1,0 +1,25 @@
+{
+  "name": "redact-extension",
+  "description": "Catch credentials and PII before pasting into LLM chat boxes",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wxt",
+    "dev:firefox": "wxt -b firefox",
+    "build": "wxt build",
+    "build:firefox": "wxt build -b firefox",
+    "zip": "wxt zip",
+    "zip:firefox": "wxt zip -b firefox",
+    "compile": "tsc --noEmit",
+    "postinstall": "wxt prepare"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.8.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vite-plugin-static-copy": "^3.1.4",
+    "wxt": "^0.20.25"
+  }
+}
