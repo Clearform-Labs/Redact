@@ -77,6 +77,10 @@ export function mergeNerAndRegex(text: string, nerSpans: AlignedSpan[], regexHit
     tier: NER_TIER[s.label] ?? 'warn',
     score: s.score,
   }));
+
+  // Regex hits are kept only when they don't overlap an existing NER span — the
+  // model wins on overlap. Regex is a safety net for canonical formats the model
+  // wasn't explicitly trained on, not a boundary corrector for the model.
   const extra = regexHits.filter((r) => !ner.some((n) => overlaps(r, n)));
   return [...ner, ...extra].sort((a, b) => a.start - b.start);
 }

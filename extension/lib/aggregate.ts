@@ -79,18 +79,35 @@ function alignToken(
   return { start: found, end: found + needle.length };
 }
 
+// Per-subword confidence floor. Aligned tokens below this score are dropped before
+// grouping. Lower than the post-aggregation block/warn thresholds (0.85 / 0.70)
+// because those apply to whole-span averages — this one is per-piece and exists
+// purely to trim low-confidence drift at span edges. A real entity has its
+// interior tokens well above 0.5; the model's confidence sags only when it's
+// reaching past the actual value into surrounding context.
+const PER_TOKEN_SCORE_FLOOR = 0.5;
+
+// Connector words that appear inside over-grouped spans but rarely inside a real
+// entity. When the model labels "OPENAI_KEY=foo and DATABASE_URL=bar" as one
+// CREDENTIAL span, the literal " and " is a strong signal that two unrelated
+// regions got fused. We split the span there. Whitespace padding is required so
+// we don't false-trigger on substrings (e.g. "andrew", "foreign").
+const CONNECTOR_RE = /\s+(?:and|or|then|with|plus)\s+|\s+-\s+/gi;
+
 export function aggregateBio(rawOutput: RawToken[], source: string): AlignedSpan[] {
   if (rawOutput.length === 0) return [];
 
   const sourceLower = source.toLowerCase();
   let cursor = 0;
 
-  // Step 1: align each token, dropping any we can't place.
+  // Step 1: align each token, dropping any we can't place AND any whose
+  // confidence is below the per-token floor (see above).
   type Aligned = { start: number; end: number; prefix: 'B' | 'I'; label: string; score: number };
   const aligned: Aligned[] = [];
   for (const tok of rawOutput) {
     const [prefix, label] = splitTag(tok.entity);
     if (label === 'O') continue;
+    if (tok.score < PER_TOKEN_SCORE_FLOOR) continue;
 
     const span = alignToken(source, sourceLower, cursor, tok.word);
     if (!span) continue;
@@ -120,5 +137,45 @@ export function aggregateBio(rawOutput: RawToken[], source: string): AlignedSpan
     }
   }
 
-  return groups;
+  // Step 3: trim each span's edges. The model frequently includes adjacent
+  // whitespace, equals signs, or colons in its predicted span (e.g. labeling
+  // `KEY=value` as one CREDENTIAL when only `value` is the secret). Trimming
+  // is purely cosmetic — it doesn't drop tokens, just narrows the [start, end)
+  // to the inner literal so the redaction marker sits where the user expects.
+  for (const g of groups) {
+    while (g.start < g.end && /[\s=:,;"']/.test(source[g.start])) g.start += 1;
+    while (g.end > g.start && /[\s=:,;"']/.test(source[g.end - 1])) g.end -= 1;
+  }
+
+  // Step 4: split spans on English connector words. The model occasionally fuses
+  // two unrelated entities into one span when they sit in similar contexts
+  // ("KEY=foo and OTHER_KEY=bar"). A literal " and "/" or "/" - " inside a
+  // span is a much stronger signal of mis-grouping than of a real multi-word
+  // credential, so we cut there and let edge-trim re-tighten each piece.
+  const split: AlignedSpan[] = [];
+  for (const g of groups) {
+    const inner = source.slice(g.start, g.end);
+    CONNECTOR_RE.lastIndex = 0;
+    let lastCut = 0;
+    let m: RegExpExecArray | null;
+    const cuts: Array<{ start: number; end: number }> = [];
+    while ((m = CONNECTOR_RE.exec(inner)) !== null) {
+      cuts.push({ start: lastCut, end: m.index });
+      lastCut = m.index + m[0].length;
+    }
+    if (cuts.length === 0) {
+      split.push(g);
+      continue;
+    }
+    cuts.push({ start: lastCut, end: inner.length });
+    for (const c of cuts) {
+      let s = g.start + c.start;
+      let e = g.start + c.end;
+      while (s < e && /[\s=:,;"']/.test(source[s])) s += 1;
+      while (e > s && /[\s=:,;"']/.test(source[e - 1])) e -= 1;
+      if (e > s) split.push({ start: s, end: e, label: g.label, score: g.score });
+    }
+  }
+
+  return split.filter((g) => g.end > g.start);
 }
