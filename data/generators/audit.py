@@ -365,34 +365,117 @@ def check_negative_prefix_overlap(positive_rows: list[dict], negative_rows: list
 # ─────────────────────────────────────────────────────────────────────────────
 # Reporting
 
+def _render_label_balance(balance: dict) -> list[str]:
+    lines = ["| Label | Count | Actual % | Expected % | Deviation | Status |",
+             "|---|---:|---:|---:|---:|:---:|"]
+    for label, info in balance.items():
+        status = "✓" if info["within_tolerance"] else "✗"
+        lines.append(f"| {label} | {info['count']:,} | {info['actual_pct']}% | "
+                     f"{info['expected_pct']}% | {info['deviation_pct']:+.1f}% | {status} |")
+    return lines
+
+def _render_diversity(div: dict) -> list[str]:
+    return [
+        f"- Rows: **{div['rows']:,}**",
+        f"- Unique prose shapes: **{div['unique_shapes']:,}** ({div['diversity_pct']}%)",
+        f"- Top repeat counts: {div['top_repeat_counts']}",
+        f"- Length p1/p50/p99: {div['length_p1_p50_p99'][0]} / "
+        f"{div['length_p1_p50_p99'][1]} / {div['length_p1_p50_p99'][2]} chars",
+    ]
+
+def _render_counts(counts: dict, header: str) -> list[str]:
+    if not counts:
+        return [f"- ✓ {header}: 0 issues"]
+    lines = [f"- {header}:"]
+    for k, v in counts.items():
+        lines.append(f"  - `{k}`: {v}")
+    return lines
+
 def render_markdown(report: dict) -> str:
+    s = report["summary"]
     lines = ["# Synthetic v3 Audit Report", ""]
+
+    # ── Summary ──────────────────────────────────────────────────────────────
     lines.append("## Summary")
     lines.append("")
-    summary = report["summary"]
-    lines.append(f"- Train rows: **{summary['train_rows']:,}**")
-    lines.append(f"- Eval rows: **{summary['eval_rows']:,}**")
-    lines.append(f"- Negative rows: **{summary['neg_rows']:,}**")
-    lines.append(f"- Cross-split overlap (train∩eval, train∩neg, eval∩neg): "
-                 f"{summary['cross_split']['train_eval_overlap']}, "
-                 f"{summary['cross_split']['train_neg_overlap']}, "
-                 f"{summary['cross_split']['eval_neg_overlap']}")
-    lines.append(f"- All structural checks: {'✓ PASS' if summary['structural_pass'] else '✗ FAIL'}")
-    lines.append(f"- All semantic checks: {'✓ PASS' if summary['semantic_pass'] else '✗ FAIL'}")
-    lines.append(f"- Train diversity: **{summary['train_diversity']}%**")
-    lines.append(f"- Negative diversity: **{summary['neg_diversity']}%**")
+    lines.append("| Metric | Value |")
+    lines.append("|---|---|")
+    lines.append(f"| Train rows | **{s['train_rows']:,}** |")
+    lines.append(f"| Eval rows | **{s['eval_rows']:,}** |")
+    lines.append(f"| Negative rows | **{s['neg_rows']:,}** |")
+    lines.append(f"| Train prose diversity | **{s['train_diversity']}%** |")
+    lines.append(f"| Negative prose diversity | **{s['neg_diversity']}%** |")
+    lines.append(f"| Structural checks | {'✓ PASS' if s['structural_pass'] else '✗ FAIL'} |")
+    lines.append(f"| Semantic checks | {'✓ PASS' if s['semantic_pass'] else '✗ FAIL'} |")
+    cs = s['cross_split']
+    lines.append(f"| Train ∩ Eval overlap | {cs['train_eval_overlap']} |")
+    lines.append(f"| Train ∩ Neg overlap | {cs['train_neg_overlap']} |")
+    lines.append(f"| Eval ∩ Neg overlap | {cs['eval_neg_overlap']} |")
+    lines.append(f"| Train internal duplicates | {cs['train_internal_dupes']} |")
     lines.append("")
 
+    # ── Label balance ────────────────────────────────────────────────────────
+    lines.append("## Label balance (train)")
+    lines.append("")
+    lines.extend(_render_label_balance(report["train"]["coverage"]["label_balance"]))
+    lines.append("")
+
+    # ── Diversity per split ──────────────────────────────────────────────────
     for split_name, key in [("Train", "train"), ("Eval", "eval"), ("Negatives", "neg")]:
-        s = report[key]
         lines.append(f"## {split_name}")
         lines.append("")
-        for section, data in s.items():
-            lines.append(f"### {section}")
-            lines.append("```")
-            lines.append(json.dumps(data, indent=2))
-            lines.append("```")
+        sect = report[key]
+
+        lines.append("**Diversity**")
+        lines.extend(_render_diversity(sect["diversity"]))
         lines.append("")
+
+        lines.append("**Structural checks**")
+        lines.extend(_render_counts(sect["structural"]["counts"], "Structural issues"))
+        lines.append("")
+
+        if "semantic" in sect:
+            lines.append("**Semantic checks**")
+            lines.extend(_render_counts(sect["semantic"]["counts"], "Semantic issues"))
+            lines.append("")
+
+        if "hygiene" in sect:
+            h = sect["hygiene"]
+            lines.append("**Hygiene**")
+            lines.append(f"- Common-word leaks (CRED values containing English stop-words): "
+                         f"**{h['common_word_leak_count']}**")
+            lines.append(f"- Adjacent same-label entities (<5 chars apart): "
+                         f"**{h['adjacent_same_label_count']}** (intentional adversarial signal)")
+            lines.append("")
+
+    # ── Tokenization ─────────────────────────────────────────────────────────
+    if "tokenization" in report:
+        tok = report["tokenization"]
+        lines.append("## Tokenization preview")
+        lines.append("")
+        if tok.get("status") == "ran":
+            p1, p50, p99 = tok["token_count_p1_p50_p99"]
+            lines.append(f"- Sample size: {tok['sample_size']}")
+            lines.append(f"- Token count p1/p50/p99: **{p1} / {p50} / {p99}**")
+            lines.append(f"- Max tokens: **{tok['max']}**")
+            lines.append(f"- Examples >512 tokens: **{tok['over_512']}** "
+                         f"(handled via `return_overflowing_tokens` chunking in training)")
+        else:
+            lines.append(f"- Status: skipped ({tok.get('reason', 'unknown')})")
+        lines.append("")
+
+    # ── Negative-positive prefix overlap ─────────────────────────────────────
+    if "neg_prefix_overlap" in report:
+        npo = report["neg_prefix_overlap"]
+        lines.append("## Negative–positive prefix overlap")
+        lines.append("")
+        lines.append(f"- Common credential prefixes (≥5 occurrences): **{npo['common_credential_prefixes']}**")
+        lines.append(f"- Negatives containing one of those prefixes: **{npo['negatives_with_credential_prefix']}**")
+        lines.append("- Note: some overlap is OK (e.g., the doc-placeholder negative `set OPENAI_API_KEY=sk-...` "
+                     "uses the `sk-` prefix to teach the boundary). High overlap with no semantic context, however, "
+                     "would confuse the model.")
+        lines.append("")
+
     return "\n".join(lines)
 
 
