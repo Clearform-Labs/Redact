@@ -34,11 +34,31 @@ function maskValue(value: string): string {
 
 // Default auto-dismiss timing (ms) when the caller doesn't override.
 // Scales with detection count: more items → more time to read; 10+ requires manual dismiss.
+// Bumped from earlier (5/8/12s) — banner was disappearing before users noticed it.
 function defaultAutoDismissMs(n: number): number {
-  if (n <= 1) return 5000;
-  if (n <= 3) return 8000;
-  if (n <= 9) return 12000;
+  if (n <= 1) return 8000;
+  if (n <= 3) return 12000;
+  if (n <= 9) return 18000;
   return 0;
+}
+
+// Pause an auto-dismiss timer while the user hovers the element. Reading a stack of
+// chips takes longer than the static budget, so this keeps the panel up as long as
+// the cursor is over it; it resumes on mouseleave with the remaining time.
+function attachHoverPause(el: HTMLElement, ms: number, onDismiss: () => void) {
+  if (ms <= 0) return;
+  let remaining = ms;
+  let startedAt = Date.now();
+  let timer = window.setTimeout(onDismiss, remaining);
+  el.addEventListener('mouseenter', () => {
+    window.clearTimeout(timer);
+    remaining -= Date.now() - startedAt;
+  });
+  el.addEventListener('mouseleave', () => {
+    if (remaining <= 0) return;
+    startedAt = Date.now();
+    timer = window.setTimeout(onDismiss, remaining);
+  });
 }
 
 // ── Loading indicator ────────────────────────────────────────────────────────
@@ -91,9 +111,15 @@ export function showWarnBanner(warnHits: DetectionSpan[], autoDismissMs?: number
     });
   }
 
+  // If a block toast is already on screen, stack the banner below it so neither
+  // covers the other. (CSS handles the actual offset via .redact-stacked.)
+  if (document.querySelector(`.${STYLE_PREFIX}toast`)) {
+    el.classList.add(`${STYLE_PREFIX}stacked`);
+  }
+
   document.body.appendChild(el);
   const dismissMs = autoDismissMs ?? defaultAutoDismissMs(warnHits.length);
-  if (dismissMs > 0) setTimeout(() => el.remove(), dismissMs);
+  attachHoverPause(el, dismissMs, () => el.remove());
 }
 
 export function removeWarnBanner(): void {
@@ -138,15 +164,12 @@ export function showRedactionToast(blockHits: DetectionSpan[]): Promise<'undo' |
       });
     }
     document.body.appendChild(el);
-    const dismissMs = defaultAutoDismissMs(blockHits.length);
-    if (dismissMs > 0) {
-      setTimeout(() => {
-        if (el.isConnected) {
-          el.remove();
-          resolve('dismissed');
-        }
-      }, dismissMs);
-    }
+    attachHoverPause(el, defaultAutoDismissMs(blockHits.length), () => {
+      if (el.isConnected) {
+        el.remove();
+        resolve('dismissed');
+      }
+    });
   });
 }
 

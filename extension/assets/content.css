@@ -1,178 +1,290 @@
-/* Redact — banner + modal + toast styles. Scoped via .redact- to avoid host-page collisions. */
+/* Redact — overlay UI styles. All classes prefixed .redact- to avoid host-page collisions.
+   Visual language: dark slate (#0f1115) panels with a 3px red accent edge (#dc2626) that
+   mirrors the extension icon's redaction bar. Banner, toast, and loading indicator all
+   anchor top-center so the user has one place to look — front and center, hard to miss,
+   doesn't block the input box at the bottom of most chat UIs. */
 
-.redact-loading {
-  position: fixed;
-  top: 16px;
-  right: 16px;
-  z-index: 999999;
-  background: rgba(20, 20, 20, 0.92);
-  color: #fff;
-  padding: 8px 14px;
-  border-radius: 6px;
-  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
-  font-size: 13px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+@keyframes redact-slide-in {
+  from { opacity: 0; transform: translate(-50%, -10px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
 }
 
-.redact-banner {
+/* ── Loading indicator (top-center, subtle) ───────────────────────────────── */
+.redact-loading {
   position: fixed;
-  top: 16px;
+  top: 24px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 999999;
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 12px 16px;
-  border-radius: 10px;
+  background: rgba(15, 17, 21, 0.94);
+  color: #f5f5f5;
+  padding: 8px 16px;
+  border-left: 2px solid #dc2626;
+  border-radius: 4px;
+  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  animation: redact-slide-in 0.18s ease-out;
+}
+
+/* ── Shared panel base — used by warn banner + block toast ────────────────── */
+.redact-banner,
+.redact-toast {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 999999;
+  background: #0f1115;
+  color: #f5f5f5;
+  padding: 14px 18px 14px 16px;
+  border-left: 3px solid #dc2626;
+  border-radius: 6px;
   font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
   font-size: 13px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.18);
-  max-width: 720px;
-  min-width: 360px;
+  line-height: 1.4;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  width: min(480px, calc(100vw - 32px));
+  animation: redact-slide-in 0.22s ease-out;
 }
-.redact-banner-warn { background: #fff7e6; border: 1px solid #f7c873; color: #5a3d00; }
-.redact-banner-icon { font-size: 18px; line-height: 1.4; }
+
+/* When both panels exist (auto-redact + warn), stack the banner under the toast
+   so neither covers the other. The toast is the primary action; the banner is
+   informational. JS toggles a class to apply this offset. */
+.redact-banner.redact-stacked { top: 96px; }
+
+/* Warn-tier uses an amber stripe so users can distinguish at a glance. */
+.redact-banner-warn { border-left-color: #f59e0b; }
+
+.redact-banner { display: flex; align-items: flex-start; gap: 10px; }
+
+.redact-banner-icon { font-size: 16px; line-height: 1.4; flex-shrink: 0; margin-top: 1px; }
 .redact-banner-text { flex: 1; min-width: 0; }
-.redact-banner-text strong { display: block; font-size: 13px; margin-bottom: 6px; }
-.redact-banner-close {
-  background: transparent; border: none; color: inherit;
-  font-size: 20px; cursor: pointer; margin-left: 4px;
-  line-height: 1; padding: 0 4px;
+.redact-banner-text strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fafafa;
+  margin-bottom: 8px;
+  letter-spacing: 0.1px;
 }
+.redact-banner-close {
+  background: transparent;
+  border: none;
+  color: #71717a;
+  font-size: 18px;
+  cursor: pointer;
+  margin-left: 4px;
+  line-height: 1;
+  padding: 0 4px;
+  transition: color 0.12s;
+}
+.redact-banner-close:hover { color: #f5f5f5; }
 .redact-banner-more {
   display: inline-block;
   font-size: 11px;
-  color: #7a6033;
+  color: #a1a1aa;
   font-weight: 500;
   align-self: center;
   padding: 3px 4px;
 }
 
-/* Detection chips used in banner + toast */
+/* ── Detection chips (used in banner + toast) ─────────────────────────────── */
 .redact-chip-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .redact-chip {
-  display: inline-flex; align-items: center; gap: 5px;
-  background: rgba(255,255,255,0.7);
-  border: 1px solid rgba(0,0,0,0.08);
-  padding: 2px 6px 2px 8px;
-  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 3px 8px 3px 9px;
+  border-radius: 4px;
   font-size: 11px;
   white-space: nowrap;
   max-width: 220px;
   overflow: hidden;
 }
-.redact-chip-label { font-weight: 600; color: #7a4a00; }
+.redact-chip-label {
+  font-weight: 600;
+  color: #fca5a5;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  font-size: 9.5px;
+}
+.redact-banner-warn .redact-chip-label { color: #fcd34d; }
 .redact-chip-value {
-  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   font-size: 10.5px;
-  background: rgba(0,0,0,0.05);
-  padding: 1px 5px;
+  background: rgba(0, 0, 0, 0.35);
+  padding: 1px 6px;
   border-radius: 3px;
-  color: #444;
+  color: #e4e4e7;
 }
 
-.redact-toast {
-  position: fixed;
-  bottom: 24px; right: 24px;
-  z-index: 999999;
-  padding: 12px 14px 10px;
-  border-radius: 10px;
-  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
-  font-size: 13px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
-  max-width: 380px;
-  min-width: 280px;
-}
-.redact-toast-block { background: #fef2f2; border: 1px solid #f1a3a3; color: #7a1f1f; }
+/* ── Block toast (auto-redact mode) ───────────────────────────────────────── */
 .redact-toast-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   font-size: 13px;
 }
-.redact-toast-header strong { flex: 1; min-width: 0; }
-.redact-toast-icon { font-size: 16px; line-height: 1; }
+.redact-toast-header strong {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  color: #fafafa;
+  letter-spacing: 0.1px;
+}
+.redact-toast-icon { font-size: 15px; line-height: 1; flex-shrink: 0; }
 .redact-toast-undo {
   background: transparent;
-  border: 1px solid #b91c1c;
-  color: #b91c1c;
-  padding: 3px 12px;
-  border-radius: 5px;
+  border: 1px solid #dc2626;
+  color: #f87171;
+  padding: 4px 14px;
+  border-radius: 4px;
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
   cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  font-family: inherit;
 }
-.redact-toast-undo:hover { background: #b91c1c; color: #fff; }
+.redact-toast-undo:hover { background: #dc2626; color: #fff; }
 .redact-toast-list {
-  display: flex; flex-direction: column; gap: 4px;
-  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 .redact-toast-item {
-  display: flex; align-items: center; gap: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 11.5px;
 }
-.redact-toast-item .redact-chip-label { color: #991b1b; }
-.redact-toast-item .redact-chip-value {
-  background: rgba(0, 0, 0, 0.06);
-  padding: 1px 5px;
-  border-radius: 3px;
-  font-family: ui-monospace, monospace;
-  font-size: 10.5px;
-  color: #444;
-}
 .redact-toast-more {
-  margin-top: 4px;
+  margin-top: 6px;
   font-size: 11px;
-  color: #b91c1c;
-  font-style: italic;
-  text-decoration: underline;
+  color: #a1a1aa;
+  cursor: pointer;
 }
+.redact-toast-more:hover { color: #f5f5f5; }
 
+/* ── Block modal (interactive) ────────────────────────────────────────────── */
 .redact-modal-backdrop {
   position: fixed;
-  inset: 0; z-index: 1000000;
-  background: rgba(0, 0, 0, 0.55);
-  display: flex; align-items: center; justify-content: center;
+  inset: 0;
+  z-index: 1000000;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  animation: redact-slide-in 0.18s ease-out;
 }
 .redact-modal {
-  background: #fff; color: #1a1a1a;
-  border-radius: 12px; padding: 24px 28px;
-  max-width: 540px; width: calc(100vw - 48px);
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+  background: #0f1115;
+  color: #f5f5f5;
+  border-left: 3px solid #dc2626;
+  border-radius: 8px;
+  padding: 26px 28px 22px;
+  max-width: 560px;
+  width: calc(100vw - 48px);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
 }
-.redact-modal-title { margin: 0 0 12px 0; font-size: 18px; color: #b91c1c; }
-.redact-modal-body { margin: 0 0 14px 0; font-size: 14px; line-height: 1.5; }
+.redact-modal-title {
+  margin: 0 0 10px 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: #fafafa;
+  letter-spacing: 0.1px;
+}
+.redact-modal-body {
+  margin: 0 0 16px 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: #d4d4d8;
+}
+.redact-modal-body strong { color: #fafafa; font-weight: 600; }
 .redact-modal-list {
-  list-style: none; padding: 0; margin: 0 0 18px 0;
-  max-height: 220px; overflow-y: auto;
-  border: 1px solid #f1d1d1; border-radius: 6px;
+  list-style: none;
+  padding: 0;
+  margin: 0 0 20px 0;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.2);
 }
 .redact-modal-list li {
-  padding: 8px 12px; border-bottom: 1px solid #f4e6e6; font-size: 13px;
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 9px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 12.5px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 .redact-modal-list li:last-child { border-bottom: none; }
 .redact-modal-label {
-  background: #fee2e2; color: #991b1b;
-  padding: 2px 8px; border-radius: 4px;
-  font-weight: 600; font-size: 11px; letter-spacing: 0.4px;
+  background: rgba(220, 38, 38, 0.18);
+  color: #fca5a5;
+  padding: 3px 9px;
+  border-radius: 3px;
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
 }
 .redact-modal-value {
-  font-family: ui-monospace, monospace; font-size: 12px;
-  background: #f5f5f5; padding: 1px 6px; border-radius: 3px;
-  color: #444; word-break: break-all;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 11.5px;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 2px 7px;
+  border-radius: 3px;
+  color: #e4e4e7;
+  word-break: break-all;
 }
-.redact-modal-source { color: #888; font-size: 11px; }
-.redact-modal-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+.redact-modal-source { color: #71717a; font-size: 11px; }
+
+.redact-modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
 .redact-btn {
-  padding: 8px 16px; border-radius: 6px; border: 1px solid transparent;
-  font-size: 14px; font-weight: 500; cursor: pointer;
+  padding: 8px 16px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
-.redact-btn-cancel  { background: #f5f5f5; color: #333; border-color: #ddd; }
-.redact-btn-cancel:hover { background: #ebebeb; }
-.redact-btn-redact  { background: #fff7e6; color: #7a4a00; border-color: #f7c873; }
-.redact-btn-redact:hover { background: #ffe8b8; }
-.redact-btn-confirm { background: #b91c1c; color: #fff; }
-.redact-btn-confirm:hover { background: #991b1b; }
+.redact-btn-cancel {
+  background: transparent;
+  color: #d4d4d8;
+  border-color: rgba(255, 255, 255, 0.14);
+}
+.redact-btn-cancel:hover { background: rgba(255, 255, 255, 0.06); color: #fafafa; }
+.redact-btn-redact {
+  background: transparent;
+  color: #fcd34d;
+  border-color: rgba(245, 158, 11, 0.5);
+}
+.redact-btn-redact:hover { background: rgba(245, 158, 11, 0.12); border-color: #f59e0b; }
+.redact-btn-confirm {
+  background: #dc2626;
+  color: #fff;
+  border-color: #dc2626;
+}
+.redact-btn-confirm:hover { background: #b91c1c; border-color: #b91c1c; }
