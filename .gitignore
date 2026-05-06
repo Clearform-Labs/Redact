@@ -10,6 +10,8 @@ models/
 .env
 .DS_Store
 *.pdf
-data/
+data/*
+!data/generators/
+data/generators/__pycache__/
 wandb/
 checkpoints/
