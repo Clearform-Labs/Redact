@@ -92,7 +92,7 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
   </section>
 
   <footer class="rdct-footer">
-    <span>v0.1.0 · <code>Redact-NER-v1</code></span>
+    <span>v0.3.0 · <code>Redact-NER-v3</code></span>
     <a class="rdct-footer-link" id="rdct-reset">Reset defaults</a>
   </footer>
 `;
