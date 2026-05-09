@@ -166,7 +166,7 @@ def main() -> None:
 
     if args.include_adversarial:
         from . import adversarial
-        adversarial.write(OUT_DIR / "synthetic_adversarial_v3.csv", count=500)
+        adversarial.write(OUT_DIR / "synthetic_adversarial_v3.csv", count=800)
 
     print("done.")
 
