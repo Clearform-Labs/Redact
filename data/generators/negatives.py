@@ -313,28 +313,115 @@ def neg_well_known_test_values() -> str:
 # ── 10. Public IDs that look private (NEW) ───────────────────────────────────
 
 def neg_public_ids_lookalikes() -> str:
+    # v3.0 model flagged Stripe public IDs (`cus_*`, `sub_*`, `prod_*`) as
+    # credentials. The model needs to see these specific patterns embedded in
+    # realistic dev prose MANY MORE TIMES, with explicit framing that they're
+    # public IDs, not secrets. Heavy bias toward Stripe since that's the most
+    # common one in the wild.
+
+    # Generate Stripe-prefix IDs once per call so we can reuse the SAME id in
+    # multiple sentence framings — that mimics how real support tickets
+    # reference an ID multiple times in one paste.
+    cus_id = f"cus_{_alnum(14)}"
+    sub_id = f"sub_{_alnum(14)}"
+    pi_id  = f"pi_{_alnum(24)}"
+    ch_id  = f"ch_{_alnum(24)}"
+    evt_id = f"evt_{_alnum(24)}"
+    prod_id = f"prod_{_alnum(14)}"
+    price_id = f"price_{_alnum(24)}"
+    in_id  = f"in_{_alnum(24)}"   # invoice
+    re_id  = f"re_{_alnum(24)}"   # refund
+    pm_id  = f"pm_{_alnum(24)}"   # payment method
+    sk_test_id = f"sk_test_{_alnum(24)}"  # this is a SECRET key — but only the
+                                           # public version (pk_) appears in a
+                                           # negative; we never label sk_test_*
+                                           # as a non-credential. Skip.
+    pk_pub = f"pk_live_{_alnum(24)}"  # publishable key — PUBLIC by design
+    twilio_ac = f"AC{_alnum(32, 'abcdef0123456789')}"
+    twilio_mg = f"MG{_alnum(32, 'abcdef0123456789')}"
+    twilio_sm = f"SM{_alnum(32, 'abcdef0123456789')}"
+
+    # Slack public IDs
+    slack_team = f"T0{_alnum(8, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')}"
+    slack_chan = f"C0{_alnum(8, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')}"
+    slack_user = f"U0{_alnum(8, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')}"
+
+    # OpenAI / Anthropic / GitHub identifiers
+    openai_org = f"org-{_alnum(24)}"
+    openai_proj = f"proj_{_alnum(24)}"
+    anthropic_ws = f"ws_{_alnum(24)}"
+    github_actor = f"u{_alnum(7, 'abcdefghijklmnopqrstuvwxyz0123456789')}"
+
     return _pick([
-        f"Stripe customer id: cus_{_alnum(14)}. Public, safe to share in support tickets.",
-        f"Stripe payment intent: pi_{_alnum(24)}. Webhooks reference these — public IDs.",
-        f"Stripe charge id: ch_{_alnum(24)}, evt_{_alnum(24)} for the linked event.",
-        f"Stripe product id prod_{_alnum(14)} and price_{_alnum(24)} for the new tier.",
-        f"Stripe subscription sub_{_alnum(14)} — visible in the dashboard, public-safe.",
-        f"Twilio Account SID AC{_alnum(32)} — this is PUBLIC. The auth token is the secret one.",
-        f"Twilio Messaging Service SID: MG{_alnum(32)}. Public identifier.",
-        f"Slack workspace ID T0{_alnum(8, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')}, channel ID C0{_alnum(8, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')}. Both public.",
+        # ── Stripe — the highest-frequency real-world public ID ────────────
+        f"Stripe customer id: {cus_id}. Public, safe to share in support tickets.",
+        f"customer {cus_id} is on the Pro plan. linked to subscription {sub_id}.",
+        f"refunding charge {ch_id} for customer {cus_id}. invoice was {in_id}.",
+        f"webhook event {evt_id} fired for {cus_id} — payment_intent.succeeded.",
+        f"the failed payment attempt is {pi_id}. customer is {cus_id}.",
+        f"new product {prod_id} created with price {price_id} for the enterprise tier.",
+        f"refund {re_id} processed for charge {ch_id} (customer {cus_id}).",
+        f"payment method {pm_id} attached to customer {cus_id}. card ends 4242.",
+        f"Stripe dashboard URL: https://dashboard.stripe.com/customers/{cus_id}",
+        f"reference for the support ticket: customer={cus_id} subscription={sub_id} payment_intent={pi_id}",
+        f"in stripe-cli: stripe customers retrieve {cus_id}",
+        f"the publishable key {pk_pub} is fine to put in client-side code (that's what 'publishable' means).",
+        f"customer ID prefix is `cus_` — these are public identifiers visible in the dashboard URL.",
+        f"all stripe ids: customer={cus_id}, subscription={sub_id}, latest_invoice={in_id}",
+        f"reproducing the bug with stripe test object {pi_id} → {cus_id}",
+        f"audit log entry: actor=admin object={cus_id} action=update timestamp=2026-04-23T14:32:08Z",
+
+        # ── Twilio — public account SID vs secret auth token ────────────
+        f"Twilio Account SID {twilio_ac} — this is PUBLIC. The auth token is the secret one.",
+        f"Twilio Messaging Service SID: {twilio_mg}. Public identifier.",
+        f"Twilio SMS message SID: {twilio_sm} — appears in webhook payloads, not sensitive.",
+        f"using twilio sub-account: {twilio_ac}",
+        f"twilio cli config: TWILIO_ACCOUNT_SID={twilio_ac} (public, visible in console URL)",
+
+        # ── Slack public IDs ────
+        f"Slack workspace ID {slack_team}, channel ID {slack_chan}. Both public.",
+        f"thread permalink: https://myorg.slack.com/archives/{slack_chan}/p1714051928000200",
+        f"@user mention resolves to {slack_user}. Public user ID.",
+        f"slack web api call: conversations.history?channel={slack_chan}",
+
+        # ── GitHub / GitLab URLs ────
         f"GitHub PR URL: https://github.com/myorg/{gen_service()}/pull/{random.randint(100, 9999)}. Path contains ID, not a secret.",
         f"GitHub issue: https://github.com/myorg/{gen_service()}/issues/{random.randint(100, 9999)}.",
         f"GitLab MR: https://gitlab.com/myorg/{gen_service()}/-/merge_requests/{random.randint(100, 9999)}.",
+        f"GitHub user: https://github.com/{github_actor} — public profile.",
+        f"GitHub commit: https://github.com/myorg/{gen_service()}/commit/{gen_short_sha()}",
+        f"PR comment from @{github_actor}: see related ticket {gen_ticket()}.",
+
+        # ── Cloud doc / file IDs ────
         f"Google Doc URL: https://docs.google.com/document/d/{_alnum(44, 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_')}/edit. The document ID is not a credential.",
+        f"Google Sheets reference: 1{_alnum(43, 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_')} — anyone with the link can view.",
         f"Notion page URL contains a UUID: https://www.notion.so/My-Page-{_alnum(32, 'abcdef0123456789')}. Public sharing, not a secret.",
+        f"Drive folder ID: 1{_alnum(33, 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_')} — link-share permissions apply.",
+
+        # ── Tracking IDs ────
         f"Linear ticket id: ENG-{random.randint(100, 9999)}, FEAT-{random.randint(100, 9999)}.",
         f"Jira: PROJ-{random.randint(100, 9999)}, INFRA-{random.randint(100, 9999)} — public ticket numbers.",
+        f"Asana task gid: {random.randint(10**16, 10**17 - 1)}. Visible in URL, public.",
+
+        # ── OpenAI / Anthropic / LLM provider public IDs ────
+        f"OpenAI organization id: {openai_org}. Visible in headers, not secret.",
+        f"OpenAI project id: {openai_proj} — used in api requests, public identifier.",
+        f"Anthropic workspace id: {anthropic_ws}. Public identifier.",
+        f"sentry org slug: my-startup. The DSN is the secret part — the org slug is just routing.",
+
+        # ── Cloud account / project IDs ────
         f"Discord channel snowflake: {random.randint(10**17, 10**18 - 1)}. Public, anyone with the URL has it.",
         f"AWS account id: {random.randint(10**11, 10**12 - 1)} — visible in ARNs, not sensitive on its own.",
         f"GCP project id: my-project-{random.randint(100000, 999999)}. Public.",
-        f"OpenAI organization id: org-{_alnum(24)}. Visible in headers, not secret.",
-        f"Anthropic workspace id: ws_{_alnum(24)}. Public identifier.",
+        f"Azure tenant id: {gen_uuid()} — public identifier, the *secret* is the client_secret.",
         f"Mixpanel project token (public client-side key): {_alnum(32, 'abcdef0123456789')} — different from the API secret.",
+
+        # ── Mixed: support-ticket-style paste with multiple public IDs ────
+        f"customer reached out via {cus_id}. they're on subscription {sub_id} (last billed via {in_id}). loop in {gen_human_first().capitalize()}.",
+        f"investigating refund {re_id} → {ch_id} for customer {cus_id}. waiting on {gen_human_first().capitalize()}.",
+        f"escalation: payment_intent {pi_id} failed for {cus_id}. event was {evt_id}.",
+        f"FYI: reviewing {cus_id}'s account. found {sub_id} active, {pi_id} declined yesterday.",
+        f"slack thread {slack_chan}/p1714051928 about customer {cus_id} — please add notes.",
     ])
 
 
@@ -517,7 +604,7 @@ NEGATIVES: list[tuple] = [
     (neg_numeric_lookalikes,          1.5),
     # New categories
     (neg_well_known_test_values,      2.5),  # critical — the test-card-redaction problem
-    (neg_public_ids_lookalikes,       2.0),  # cus_/prod_/Twilio SIDs are constantly pasted
+    (neg_public_ids_lookalikes,       3.5),  # bumped — v3.0 still flagging Stripe cus_/sub_ IDs
     (neg_hashes,                      1.5),
     (neg_license_keys,                1.0),
     (neg_tracking_analytics_ids,      1.5),

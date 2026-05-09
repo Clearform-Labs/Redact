@@ -1360,27 +1360,264 @@ def ctx_jupyter_notebook(items, length: LengthMode = 'medium') -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 19. ctx_env_multi — DENSE .env paste targeting v3.0's "merge everything" bug.
+#
+# v3.0 model collapsed adjacent .env lines into a single credential span
+# (e.g. AWS_KEY=... DATABASE_URL=... → one 138-char "CREDENTIAL"). Root cause:
+# training data didn't have enough multi-line .env examples where each line is
+# explicitly its own credential entity. This generator produces 3-8 distinct
+# credential lines per example, each labeled separately. The model has to learn
+# that newline-separated VAR=value pairs are independent entities, not a blob.
+
+def _gen_extra_credentials(n: int):
+    """Generate N additional (label, value) pairs, all CREDENTIAL — used by
+    ctx_env_multi to force dense multi-credential examples."""
+    from .formats import sample as _sample
+    return [("CREDENTIAL", _sample("CREDENTIAL")) for _ in range(n)]
+
+ENV_MULTI_OPENERS = ENV_OPENERS + [
+    "production .env from the bastion (full dump for the ops audit):",
+    "switching providers — here's everything we set in the old config:",
+    "scrubbing prod env for the secret rotation. complete list:",
+    "kubectl describe secret app-prod -n production output:",
+    "dotenv-vault diff from main → release. all the changed values:",
+    "infrastructure handover doc — current production secrets:",
+    "rotating *all* of these tomorrow at 6am. listing for the on-call playbook:",
+]
+
+def ctx_env_multi(items, length: LengthMode = 'medium') -> str:
+    # Force dense multi-credential output. If the caller passed only 1-2 items,
+    # add 2-6 more CREDENTIAL items so the example has 3-8 distinct entities,
+    # each on its own line.
+    items = list(items)
+    n_existing = len(items)
+    target = {'short': 3, 'medium': random.randint(4, 6), 'long': random.randint(6, 10)}[length]
+    if n_existing < target:
+        items.extend(_gen_extra_credentials(target - n_existing))
+
+    opener = _pick(ENV_MULTI_OPENERS)
+    n_filler = {'short': 1, 'medium': random.randint(2, 4), 'long': random.randint(5, 10)}[length]
+
+    use_export = random.random() < 0.35  # higher than ctx_env since `export` is common in dotenv
+    fillers = random.sample(ENV_NON_SECRET_VARS, min(n_filler, len(ENV_NON_SECRET_VARS)))
+
+    # Group all credential lines together (more realistic than interleaving),
+    # with optional non-secret block before/after — mirrors how real .env files
+    # are organized.
+    lines = [opener, ""]
+    if random.random() < 0.4:
+        lines.append("# ---- " + _pick(["app", "database", "auth", "third-party APIs"]) + " ----")
+
+    cred_lines = []
+    for label, value in items:
+        var = _format_var_for_value(label, value)
+        line = f"{var}={annotate(value, label)}"
+        if use_export:
+            line = "export " + line
+        # Inline comments are rare in dense dumps — only 5%
+        if random.random() < 0.05:
+            line += "  " + _pick(ENV_COMMENTS)
+        cred_lines.append(line)
+
+    # Insert filler vars BEFORE or AFTER the credential block (most common
+    # real-world pattern: NODE_ENV / PORT / region at top, secrets in middle,
+    # feature flags at bottom — but we don't enforce strict ordering)
+    filler_lines = []
+    for k, v in fillers:
+        if use_export:
+            filler_lines.append(f"export {k}={v}")
+        else:
+            filler_lines.append(f"{k}={v}")
+
+    # Mix: half the time, fillers go before credentials; half the time, after
+    if random.random() < 0.5:
+        lines.extend(filler_lines + [""] + cred_lines)
+    else:
+        lines.extend(cred_lines + [""] + filler_lines)
+
+    if random.random() < 0.5:
+        lines.append("")
+        lines.append(_pick(ENV_CLOSERS))
+    return "\n".join(l for l in lines if l is not None)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 20. ctx_proximity_chain — credentials connected by " and ", commas, etc.
+#
+# v3.0 detected only 53% of credentials in proximity-pattern adversarial cases.
+# Same root cause as ctx_env_multi: the model treats nearby credentials as one
+# entity. Train it explicitly on patterns where credentials are inline-adjacent
+# but separately labeled.
+
+PROXIMITY_OPENERS = [
+    "rotating credentials — old and new, both in this message:",
+    "pinging on-call: the leaked credentials are:",
+    "audit trail: the exposed values were —",
+    "for the ticket — all three secrets that need rotation:",
+    "keys to revoke:",
+    "found these in the dump file. all need to be invalidated:",
+    "DM from {name}: 'i think i pasted the staging keys, can you check'. the keys:",
+    "from the leak channel:",
+    "{name} sent these to slack by accident:",
+]
+
+PROXIMITY_CONNECTORS = [
+    " and ",
+    ", ",
+    "; ",
+    " plus ",
+    " — also ",
+    "\n  - ",
+    "\n• ",
+    " | ",
+    " & ",
+]
+
+def ctx_proximity_chain(items, length: LengthMode = 'medium') -> str:
+    # Force at least 2 credentials so we always have proximity to teach.
+    items = list(items)
+    if sum(1 for l, _ in items if l == "CREDENTIAL") < 2:
+        items.extend(_gen_extra_credentials(max(2, 4 - len(items))))
+
+    name = gen_human_first().capitalize()
+    opener = _pick(PROXIMITY_OPENERS).format(name=name)
+    lines = [opener, ""]
+
+    # Build the chain of credentials with random connectors
+    parts = []
+    for i, (label, value) in enumerate(items):
+        marker = annotate(value, label)
+        if i == 0:
+            parts.append(marker)
+        else:
+            parts.append(_pick(PROXIMITY_CONNECTORS) + marker)
+    chain = "".join(parts)
+
+    # Optionally wrap in a sentence so it's not just a bare chain
+    wrappers = [
+        f"the values are: {chain}.",
+        f"please rotate: {chain}.",
+        f"already revoked: {chain}.",
+        f"{chain} — all flagged for rotation.",
+        f"compromised: {chain}",
+        f"{chain}",  # bare, no wrapping
+    ]
+    lines.append(_pick(wrappers))
+
+    if length in ('medium', 'long'):
+        lines.append("")
+        lines.append(_pick([
+            f"filing INC ({gen_ticket()}) for the rotation.",
+            "@security team please confirm receipt.",
+            "going to do the rotation in 30 minutes.",
+            "let me know when each is invalidated.",
+            f"{gen_human_first().capitalize()} is taking the lead on the response.",
+        ]))
+    return "\n".join(lines)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 21. ctx_test_and_real_mix — well-known test value alongside real credential
+#
+# v3.0 scored only 31% on the adversarial `ambiguity` category. The model sees
+# AKIAIOSFODNN7EXAMPLE in a paste, fails to distinguish it from a real AWS key.
+# Train explicitly: paste contains BOTH a known-test value (left as O) AND a
+# real credential (labeled CREDENTIAL). The model learns the contrast.
+
+TEST_VALUES_AWS = [
+    "AKIAIOSFODNN7EXAMPLE",
+    "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    "AKIAI44QH8DHBEXAMPLE",
+]
+TEST_VALUES_CC = [
+    "4242 4242 4242 4242",
+    "4242-4242-4242-4242",
+    "5555 5555 5555 4444",
+    "4111 1111 1111 1111",
+    "4000-0000-0000-0002",
+]
+TEST_VALUES_SSN = ["123-45-6789", "000-00-0000", "111-11-1111"]
+TEST_VALUES_PHONE = ["555-555-5555", "+1 555 555 5555", "555-867-5309"]
+TEST_VALUES_EMAIL = ["test@example.com", "noreply@example.com", "user@example.org"]
+
+TEST_VALUE_FRAMINGS = [
+    "in our test fixtures we use {test} (the public test value), but production uses {real}.",
+    "{test} is the docs example. our actual key is {real}, please don't share.",
+    "replaced {test} (placeholder) with {real} (real) in the env file.",
+    "the canonical sample is {test} but ours is {real}.",
+    "don't confuse the test value {test} with the live one: {real}.",
+    "{test} ← from the docs (do not commit). {real} ← what's actually deployed.",
+    "tutorials use {test}; we use {real}.",
+    "QA fixture: {test}. Production: {real}.",
+    "Stripe docs example: {test}. Our merchant key: {real}.",
+    "{test} (sample) → {real} (rotated this morning).",
+]
+
+def ctx_test_and_real_mix(items, length: LengthMode = 'medium') -> str:
+    """Generate a paste containing a well-known test value (NOT labeled) right
+    next to a real credential (labeled). Forces the model to learn the contrast
+    rather than fire on credential-shape alone."""
+    # Pick the credential type, then pull a matching test value.
+    items = list(items)
+    if not items:
+        from .formats import sample as _sample
+        items = [("CREDENTIAL", _sample("CREDENTIAL"))]
+    label, value = items[0]
+    real_marker = annotate(value, label)
+
+    # Pick a matching test value for visual contrast — use AWS test pair
+    # because that's the most commonly-pasted public sample.
+    if label == "CREDIT_CARD":
+        test_value = _pick(TEST_VALUES_CC)
+    elif label == "SSN":
+        test_value = _pick(TEST_VALUES_SSN)
+    elif label == "PHONE":
+        test_value = _pick(TEST_VALUES_PHONE)
+    elif label == "EMAIL":
+        test_value = _pick(TEST_VALUES_EMAIL)
+    else:
+        test_value = _pick(TEST_VALUES_AWS)
+
+    framing = _pick(TEST_VALUE_FRAMINGS).format(test=test_value, real=real_marker)
+    parts = [framing]
+
+    if length in ('medium', 'long'):
+        parts.append("")
+        parts.append(_pick([
+            f"@security flagged the {gen_human_first()} commit that had {test_value} hardcoded — it was the public sample, no rotation needed.",
+            f"caught this in the audit: {test_value} appeared in our test fixtures, not a real leak.",
+            f"reviewing this with {gen_human_first().capitalize()} now.",
+            "rotating only the live key, the sample stays in test fixtures.",
+        ]))
+    return "\n".join(parts)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Public registry: list of (context_fn, allowed_length_modes)
 
 CONTEXTS: list[tuple[Callable, list[str]]] = [
-    (ctx_env,                  ['short', 'medium', 'long']),
-    (ctx_error_log,            ['short', 'medium', 'long']),
-    (ctx_support,              ['short', 'medium', 'long']),
-    (ctx_code,                 ['short', 'medium', 'long']),
-    (ctx_chat,                 ['short', 'medium']),
-    (ctx_bug_report,           ['medium', 'long']),
-    (ctx_ci_log,               ['medium', 'long']),
-    (ctx_email_fwd,            ['medium', 'long']),
-    (ctx_yaml_config,          ['short', 'medium', 'long']),
-    (ctx_dockerfile,           ['short', 'medium']),
-    (ctx_terraform,            ['short', 'medium', 'long']),
-    (ctx_curl_request,         ['short', 'medium', 'long']),
-    (ctx_sql_query,            ['short', 'medium']),
-    (ctx_diff_paste,           ['short', 'medium']),
-    (ctx_log_lines,            ['short', 'medium', 'long']),
-    (ctx_runbook_postmortem,   ['medium', 'long']),
-    (ctx_slack_thread,         ['short', 'medium', 'long']),
-    (ctx_jupyter_notebook,     ['medium', 'long']),
+    (ctx_env,                   ['short', 'medium', 'long']),
+    (ctx_error_log,             ['short', 'medium', 'long']),
+    (ctx_support,               ['short', 'medium', 'long']),
+    (ctx_code,                  ['short', 'medium', 'long']),
+    (ctx_chat,                  ['short', 'medium']),
+    (ctx_bug_report,            ['medium', 'long']),
+    (ctx_ci_log,                ['medium', 'long']),
+    (ctx_email_fwd,             ['medium', 'long']),
+    (ctx_yaml_config,           ['short', 'medium', 'long']),
+    (ctx_dockerfile,            ['short', 'medium']),
+    (ctx_terraform,             ['short', 'medium', 'long']),
+    (ctx_curl_request,          ['short', 'medium', 'long']),
+    (ctx_sql_query,             ['short', 'medium']),
+    (ctx_diff_paste,            ['short', 'medium']),
+    (ctx_log_lines,             ['short', 'medium', 'long']),
+    (ctx_runbook_postmortem,    ['medium', 'long']),
+    (ctx_slack_thread,          ['short', 'medium', 'long']),
+    (ctx_jupyter_notebook,      ['medium', 'long']),
+    # v3.1 additions targeting adversarial failures
+    (ctx_env_multi,             ['short', 'medium', 'long']),
+    (ctx_proximity_chain,       ['short', 'medium', 'long']),
+    (ctx_test_and_real_mix,     ['short', 'medium']),
 ]
 
 
@@ -1390,6 +1627,8 @@ _VOICE_INCOMPATIBLE = {
     ctx_code, ctx_bug_report, ctx_ci_log, ctx_yaml_config, ctx_dockerfile,
     ctx_terraform, ctx_curl_request, ctx_sql_query, ctx_diff_paste,
     ctx_log_lines, ctx_jupyter_notebook,
+    # v3.1 additions
+    ctx_env_multi,  # has var=value structure that voice would mangle
 }
 
 def render_positive(items, length: LengthMode | None = None, voice: bool = True) -> str:
