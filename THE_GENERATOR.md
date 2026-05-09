@@ -176,6 +176,101 @@ Timing is right.
 
 ---
 
+## Insights refined during v3.1 (2026-05-09)
+
+After the initial doc was captured, I went one more cycle around the loop — iterating on Redact's adversarial set and training pipeline. New things became clear:
+
+### 1. The adversarial set has two tiers, and the framework should make this explicit
+
+In the original write-up the "adversarial set" was treated as one bucket of held-out edge cases. v3.1 split it into:
+
+- **Tier 1 — failure-mode coverage.** "Did we fix the v2 bug where line 42 got redacted?" One category per articulated failure. Short, focused, surgical. Pass/fail.
+- **Tier 2 — user-persona realism.** "Does this work for someone vibe-coding in Cursor at midnight?" Long, messy, multi-paragraph. Mimics what a real user actually pastes — IDE chat snippets, terminal sessions, runbook docs with creds buried in section 4.
+
+Tier 1 measures *correctness against known-bad behaviors*. Tier 2 measures *correctness against the actual deployment distribution*. Both matter; they're separable; treating them as one number ("adversarial F1") obscures whether you're losing on bug-fixes or on realism.
+
+The framework should ship both as scaffolding and force the user to define their target persona for Tier 2.
+
+### 2. The framework isn't just about data — it's about the whole training-eval-deploy loop being well-formed
+
+When reviewing v3.1's training notebook, the gaps weren't in data. They were boring ML-hygiene checklist items:
+- No `EarlyStoppingCallback`
+- No `classifier_dropout` on the head
+- No post-training train-vs-eval curves
+
+These are exactly the things that an experienced ML engineer always adds and a beginner always forgets. The framework's template notebook should include them by default. **The Generator's value isn't only "agents write data generators"; it's also "the scaffolding includes the training-loop hygiene most teams skip."**
+
+This expands the artifacts list:
+- ~~Two artifacts: generator code + audit harness~~
+- **Three artifacts: generator code, audit harness, AND template notebook with full training/eval/deploy hygiene baked in.**
+
+The notebook is what makes the workflow end-to-end. Without it, "the dataset is reproducible" is true but "the model is reproducible" is not.
+
+### 3. The audit harness is a type system for synthetic data
+
+Throughout v3.1, every generator change was validated by re-running `audit.py`. The audit's checks (label balance, prose diversity, structural validity, common-word leaks) act as a contract: any new generator must produce data that passes these checks.
+
+This is the same role tests play in code, or types play in a typed language: agents can write whatever generators they want, but the audit decides whether the output is acceptable. **The audit harness is the framework's "compiler."**
+
+Implication: the audit checks should be the *first thing* a user defines for their problem, before any generators. They're the spec the generators implement.
+
+### 4. Reproducibility is a side effect of the architecture, not a design goal
+
+The v3.1 dataset is byte-identical across regenerations. This isn't because we were careful about determinism. It's because:
+- Generators are pure functions of `(seed, params)`
+- Agents writing generators only know how to write template strings + `random` calls
+- Composition (orchestrator) seeds once at the top
+
+Determinism falls out for free. **The framework should preserve this property by limiting what generator code is *allowed* to do** (no LLM calls, no `time.time()`, no network). Agents can write anything that fits the audit contract; they can't smuggle in nondeterminism even if they wanted to.
+
+This is a stronger guarantee than most synthetic-data tools offer, and it's worth marketing.
+
+### 5. The failure-mode → generator → adversarial → metric loop is concrete and traceable
+
+v3.1 added these traces explicitly:
+- Failure: "v2 over-redacts when .env file has multiple credentials"
+- Generator: `ctx_env_multi` in `contexts.py`
+- Adversarial test: `make_terminal_session` in `adversarial.py` (`env | grep` style paste)
+- Metric: per-category detection rate + tight-boundary rate on the adversarial set
+
+The framework should formalize this as a **traceability artifact**. For each known failure mode, you should be able to point to exactly which generator addresses it and which adversarial cases verify the fix. This is what regulated industries call "lineage." It's also just good engineering.
+
+CLI implication: `generator trace --failure "<id>"` shows the generator(s) and adversarial cases linked to that failure. Editing a generator without updating its traceability link emits a warning.
+
+### 6. "Vibe-coder realism" is a useful named concept
+
+Tier 2 of the adversarial set has a coherent unifying principle: what does it look like when a developer is mid-debug, panicking, copy-pasting from Cursor at 11pm to ask Claude for help?
+
+This is a *user persona* — and personas generalize. For other ML problems:
+- *Sentiment analysis*: "angry tweet at 2am" persona vs "marketer drafting copy" persona
+- *Code review*: "junior dev's first PR" vs "senior dev's massive refactor"
+- *Medical imaging*: "rural clinic with 2010-era scanner" vs "academic hospital with phantom calibration"
+
+The framework should let users define one or more **target personas** and have agents generate Tier-2 adversarial cases targeted at each. This converts a vague "make the data realistic" into concrete, testable adversarial subsets.
+
+### 7. The notebook is the project's true source of truth
+
+It's tempting to treat the model checkpoint or the dataset CSV as the artifact. But the notebook — with the bootstrap cell, sanity checks, training args, early stopping, curve plots, and ONNX export — is what re-runs make ANY of those things reproducible.
+
+The framework's killer demo is: "clone the repo, run one notebook, get the same model." Not "here's a dataset" or "here's a checkpoint." The notebook is the recipe; everything else is intermediate.
+
+---
+
+## Updated 0→1 product positioning
+
+Based on the above, the framework as a *product* now has a cleaner story:
+
+**"A repo template + agent playbook that gives small teams the ML hygiene of a senior team. You define your problem and your failure modes; the framework gives you back a reproducible model with full lineage."**
+
+The components:
+1. Template repo with `generators/`, `audit.py`, `adversarial.py`, and a notebook that already includes training-loop best practices.
+2. Agent playbook that knows how to extend the template within the audit's type system.
+3. CLI for the iteration loop (`init`, `generate`, `audit`, `iterate`, `trace`, `regress`).
+
+That's enough for an open-source v1. Tier-2 persona generation, traceability tooling, and the SaaS UI are Phase 2+.
+
+---
+
 ## References (where in Redact this pattern appears concretely)
 
 - The 7-step loop is implicit in commits `005bd76` (initial v3 generator), `bafcd6b` (data-driven v2 fixes), `a33edd2` (v3.1 targeting v3.0 adversarial failures).
