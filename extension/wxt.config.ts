@@ -7,8 +7,8 @@ import { HOST_MATCHES } from './lib/sites';
 export default defineConfig({
   manifest: {
     name: 'Redact',
-    description: 'Catch credentials and PII before pasting into LLM chat boxes (ChatGPT, Claude, Gemini).',
-    version: '0.1.0',
+    description: 'Catch credentials and PII before pasting into LLM chats — ChatGPT, Claude, Gemini, Copilot, Perplexity, Grok, DeepSeek, Mistral, Poe.',
+    version: '1.0.0',
     permissions: ['storage'],
     host_permissions: HOST_MATCHES,
     web_accessible_resources: [

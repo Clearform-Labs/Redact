@@ -2,7 +2,7 @@
   "name": "redact-extension",
   "description": "Catch credentials and PII before pasting into LLM chat boxes",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "wxt",
