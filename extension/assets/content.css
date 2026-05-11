@@ -176,6 +176,16 @@
 .redact-toast-more:hover { color: #f5f5f5; }
 
 /* ── Block modal (interactive) ────────────────────────────────────────────── */
+/* Backdrop fades only — no transform — so flexbox centering of the inner
+   modal isn't fought by the shared slide-in keyframe's translate(-50%, ...) */
+@keyframes redact-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes redact-modal-pop {
+  from { opacity: 0; transform: translateY(-8px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0)     scale(1);    }
+}
 .redact-modal-backdrop {
   position: fixed;
   inset: 0;
@@ -186,7 +196,7 @@
   align-items: center;
   justify-content: center;
   font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
-  animation: redact-slide-in 0.18s ease-out;
+  animation: redact-fade-in 0.16s ease-out;
 }
 .redact-modal {
   background: #0f1115;
@@ -197,6 +207,7 @@
   max-width: 560px;
   width: calc(100vw - 48px);
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+  animation: redact-modal-pop 0.2s ease-out;
 }
 .redact-modal-title {
   margin: 0 0 10px 0;
@@ -288,3 +299,41 @@
   border-color: #dc2626;
 }
 .redact-btn-confirm:hover { background: #b91c1c; border-color: #b91c1c; }
+
+/* ── Inline confirm (compact corner card, less invasive than modal) ─────── */
+.redact-inline-confirm {
+  position: fixed;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000000;
+  background: #0f1115;
+  color: #f5f5f5;
+  border-left: 3px solid #dc2626;
+  border-radius: 6px;
+  padding: 14px 18px 12px;
+  min-width: 360px;
+  max-width: 520px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  animation: redact-slide-in 0.18s ease-out;
+}
+.redact-inline-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: #fafafa;
+}
+.redact-inline-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+  justify-content: flex-end;
+}
+.redact-inline-actions .redact-btn {
+  padding: 6px 12px;
+  font-size: 12px;
+}

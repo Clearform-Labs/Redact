@@ -1,7 +1,7 @@
 import { getAdapter, HOST_MATCHES, type SiteAdapter } from '@/lib/sites';
 import {
   showLoadingIndicator, removeLoadingIndicator,
-  showWarnBanner, showBlockModal, showRedactionToast,
+  showWarnBanner, showBlockModal, showBlockInlineConfirm, showRedactionToast,
 } from '@/lib/ui';
 import { effectiveSettings, inCooldown, markCooldown } from '@/lib/settings';
 import { redactSpans, blockSpans, warnSpans } from '@/lib/redact';
@@ -55,7 +55,46 @@ export default defineContentScript({
         const blob = new Blob([code], { type: 'text/javascript' });
         const blobUrl = URL.createObjectURL(blob);
 
+        // Some hosts ship CSP rules that disallow blob: workers (e.g. Gemini's
+        // `worker-src *` excludes blob: and chrome-extension: per spec). The
+        // Worker constructor itself succeeds, but the script load fails async
+        // and an error event fires shortly after. We race the init against
+        // that error: if no error within INIT_GRACE_MS, the worker is alive.
+        // Canonical MV3 fix for CSP-strict hosts is to move inference into an
+        // Offscreen Document — leaving that for a follow-up.
         const w = new Worker(blobUrl, { type: 'module' });
+
+        const INIT_GRACE_MS = 150;
+        let initSettled = false;
+        const initOutcome = await new Promise<'ok' | 'csp-blocked'>((resolve) => {
+          w.addEventListener('error', () => {
+            if (!initSettled) {
+              initSettled = true;
+              resolve('csp-blocked');
+            }
+            // Post-init errors are surfaced through the long-lived listener below.
+          });
+          w.postMessage({
+            type: 'init',
+            modelUrl: getURL('/model/'),
+            wasmPaths: getURL('/wasm/'),
+          });
+          setTimeout(() => {
+            if (!initSettled) {
+              initSettled = true;
+              resolve('ok');
+            }
+          }, INIT_GRACE_MS);
+        });
+
+        if (initOutcome === 'csp-blocked') {
+          console.warn(
+            `[redact] cannot run inference on ${location.hostname} — host CSP ` +
+            `blocks blob: workers. Paste detection is disabled on this site.`,
+          );
+          w.terminate();
+          throw new Error('worker-blocked-by-csp');
+        }
 
         w.addEventListener('message', (e: MessageEvent) => {
           const { id, detections, error } = e.data;
@@ -64,15 +103,8 @@ export default defineContentScript({
           pendingRequests.delete(id);
           resolve({ detections, error });
         });
-
         w.addEventListener('error', (e) => {
           console.error('[redact] worker error:', e);
-        });
-
-        w.postMessage({
-          type: 'init',
-          modelUrl: getURL('/model/'),
-          wasmPaths: getURL('/wasm/'),
         });
 
         worker = w;
@@ -92,9 +124,16 @@ export default defineContentScript({
     }
 
     // ── Core handler ────────────────────────────────────────────────────────
-    // Runs the model + UI flow on a chunk of pasted text. Returns the final
-    // text the caller should insert (possibly redacted), or null if cancelled.
-    async function processPasteText(pastedText: string): Promise<string | null> {
+    // Runs the model + UI flow on a chunk of pasted text. Returns:
+    //   - { text } — text the caller should insert (possibly redacted)
+    //   - { text, redactedBlocks } — auto-redact mode: caller inserts `text`
+    //     (already redacted) and shows the informational redact toast.
+    //   - null — the user cancelled, don't insert anything
+    interface ProcessResult {
+      text: string;
+      redactedBlocks?: DetectionSpan[];
+    }
+    async function processPasteText(pastedText: string): Promise<ProcessResult | null> {
       const settings = await effectiveSettings(location.hostname);
       if (!settings.enabled) return pastedText;
 
@@ -102,32 +141,57 @@ export default defineContentScript({
 
       showLoadingIndicator();
       let detections: DetectionSpan[] = [];
+      let workerUnavailable = false;
       try {
         const result = await runInference(pastedText);
         if (result.error) console.error('[redact] inference error:', result.error);
         detections = result.detections || [];
       } catch (err) {
-        console.error('[redact] inference threw:', err);
+        // Most commonly: host CSP blocked worker creation (see getWorker). The
+        // promise is also cached — once it rejects, subsequent calls re-throw
+        // immediately, so we won't spam the user with the warning.
+        workerUnavailable = true;
       }
       removeLoadingIndicator();
+
+      // If the worker couldn't load on this host, pass the paste through
+      // unchanged rather than swallowing it.
+      if (workerUnavailable) return { text: pastedText };
+
+      // ↓ used by both auto-redact and cooldown to surface the toast post-insert.
+
+      // Apply per-type tier overrides from user settings. The worker uses the
+      // built-in NER_TIER defaults; we re-tag here so the user's preferences
+      // (e.g. "treat email as block, not warn") drive blockSpans/warnSpans.
+      if (settings.tierOverrides && Object.keys(settings.tierOverrides).length > 0) {
+        detections = detections.map((d) => {
+          const override = settings.tierOverrides[d.label];
+          return override ? { ...d, tier: override } : d;
+        });
+      }
 
       const blocks = blockSpans(detections);
       const warns = warnSpans(detections);
 
       let finalText = pastedText;
+      let redactedBlocks: DetectionSpan[] | undefined;
 
       if (blocks.length > 0) {
         const mode = settings.blockBehavior;
-        if (mode === 'auto-redact') {
+        const isSilentRedact =
+          mode === 'auto-redact' ||
+          (mode === 'cooldown' && inCooldown(location.hostname, settings.cooldownMinutes));
+
+        if (isSilentRedact) {
+          // Caller will insert this text and then show the redact toast.
           finalText = redactSpans(pastedText, blocks);
-          const result = await showRedactionToast(blocks);
-          if (result === 'undo') finalText = pastedText;
-        } else if (mode === 'cooldown' && inCooldown(location.hostname, settings.cooldownMinutes)) {
-          finalText = redactSpans(pastedText, blocks);
-          const result = await showRedactionToast(blocks);
-          if (result === 'undo') finalText = pastedText;
+          redactedBlocks = blocks;
         } else {
-          const decision = await showBlockModal(pastedText, blocks);
+          // 'modal' = full-screen overlay; 'confirm' (default) = compact top-of-page prompt.
+          // 'cooldown' (when *not* in cooldown window) prompts the first time, then markCooldown
+          // makes future pastes within the window go silent.
+          const ask = mode === 'modal' ? showBlockModal : showBlockInlineConfirm;
+          const decision = await ask(blocks);
           if (mode === 'cooldown') markCooldown(location.hostname);
           if (decision === 'cancel') return null;
           if (decision === 'redact') finalText = redactSpans(pastedText, blocks);
@@ -138,7 +202,7 @@ export default defineContentScript({
         showWarnBanner(warns, settings.warnAutoDismissSec * 1000);
       }
 
-      return finalText;
+      return { text: finalText, redactedBlocks };
     }
 
     // ── Listener strategy ───────────────────────────────────────────────────
@@ -154,33 +218,44 @@ export default defineContentScript({
     //                    the inserted text is in `event.data`.
 
     async function onPaste(e: ClipboardEvent) {
+      // Ignore synthetic paste events. Some adapters (Perplexity, anything
+      // Lexical-based) re-insert the cleaned text by dispatching a synthetic
+      // ClipboardEvent('paste'); without this guard, our own listener would
+      // catch that re-paste, re-run inference, re-redact, and loop forever.
+      // `isTrusted` is browser-enforced and false for any event we created.
+      if (!e.isTrusted) return;
+
       const text = e.clipboardData?.getData('text') || '';
       if (text.length < 20) return;
       e.preventDefault();
       e.stopImmediatePropagation();
 
       const inputEl = (e.target as HTMLElement) || adapter.findInput();
-      const finalText = await processPasteText(text);
-      if (finalText === null || !inputEl) return;
-      adapter.insertText(inputEl, finalText);
+      const result = await processPasteText(text);
+      if (result === null || !inputEl) return;
+      adapter.insertText(inputEl, result.text);
+      if (result.redactedBlocks) showRedactionToast(result.redactedBlocks);
     }
 
     async function onBeforeInput(e: InputEvent) {
+      // Same isTrusted guard as onPaste — synthetic insertions must not re-enter.
+      if (!e.isTrusted) return;
       if (e.inputType !== 'insertFromPaste') return;
+
       const text = (e as any).data || e.dataTransfer?.getData('text') || '';
       if (text.length < 20) return;
       e.preventDefault();
       e.stopImmediatePropagation();
 
       const inputEl = (e.target as HTMLElement) || adapter.findInput();
-      const finalText = await processPasteText(text);
-      if (finalText === null || !inputEl) return;
-      adapter.insertText(inputEl, finalText);
+      const result = await processPasteText(text);
+      if (result === null || !inputEl) return;
+      adapter.insertText(inputEl, result.text);
+      if (result.redactedBlocks) showRedactionToast(result.redactedBlocks);
     }
 
     document.addEventListener('paste', onPaste, true);
     document.addEventListener('beforeinput', onBeforeInput as unknown as EventListener, true);
 
-    console.info('[redact] attached to', location.hostname);
   },
 });

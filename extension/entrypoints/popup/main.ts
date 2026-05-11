@@ -1,5 +1,20 @@
 import './style.css';
-import { DEFAULTS, loadSettings, saveSettings, type RedactSettings } from '@/lib/settings';
+import { DEFAULTS, loadSettings, saveSettings, TIER_CONFIGURABLE, type RedactSettings } from '@/lib/settings';
+import { NER_TIER, type Tier } from '@/lib/tiers';
+
+// Pretty names for per-type rows — kept here (not lib/ui) so the popup stays
+// self-contained and doesn't pull in DOM-only content-script helpers.
+const PRETTY: Record<string, string> = {
+  CREDENTIAL: 'API keys / passwords',
+  SSN: 'Social Security numbers',
+  CREDIT_CARD: 'Credit cards',
+  EMAIL: 'Email addresses',
+  PHONE: 'Phone numbers',
+};
+
+function effectiveTier(label: string, overrides: RedactSettings['tierOverrides']): Tier {
+  return overrides?.[label] ?? NER_TIER[label] ?? 'warn';
+}
 
 // Inline SVG logo — matches the icon (red square + white R + black redaction bar).
 // Sized for the 36px header slot.
@@ -27,78 +42,78 @@ document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
       <span class="rdct-status-dot"></span>
       <span class="rdct-status-text">Active</span>
     </span>
-  </header>
-
-  <div class="rdct-master">
-    <div>
-      <div class="rdct-master-label">Enabled</div>
-      <div class="rdct-master-host" id="rdct-host"></div>
-    </div>
     <label class="rdct-switch">
       <input type="checkbox" id="rdct-enabled" />
       <span class="rdct-slider"></span>
     </label>
-  </div>
+  </header>
 
   <section class="rdct-section">
-    <h2 class="rdct-section-title">When credentials, SSNs, or cards are detected</h2>
+    <h2 class="rdct-section-title">Sensitivity per type</h2>
+    <div class="rdct-tier-grid" id="rdct-tier-grid"></div>
+  </section>
+
+  <section class="rdct-section">
+    <h2 class="rdct-section-title">When a blocked type is detected</h2>
 
     <label class="rdct-opt">
       <input type="radio" name="block" value="confirm" />
-      <span class="rdct-opt-text">
-        <span class="rdct-opt-label">Always ask me to confirm</span>
-        <span class="rdct-opt-desc">Modal pops up every paste. Safest, most interruptive.</span>
-      </span>
+      <span class="rdct-opt-label">Quick prompt <span class="rdct-opt-tag">default</span></span>
     </label>
-
+    <label class="rdct-opt">
+      <input type="radio" name="block" value="modal" />
+      <span class="rdct-opt-label">Full-screen block</span>
+    </label>
     <label class="rdct-opt">
       <input type="radio" name="block" value="cooldown" />
-      <span class="rdct-opt-text">
-        <span class="rdct-opt-label">Ask once, then auto-redact for a while</span>
-        <span class="rdct-opt-desc">Modal first time. After confirming, future pastes are auto-redacted.</span>
+      <span class="rdct-opt-label">Ask once, then auto-redact for</span>
+      <span class="rdct-cooldown-inline">
+        <input type="number" id="rdct-cooldown" min="1" max="120" /> min
       </span>
     </label>
-    <div class="rdct-cooldown-row">
-      Cooldown <input type="number" id="rdct-cooldown" min="1" max="120" /> min
-    </div>
-
     <label class="rdct-opt">
       <input type="radio" name="block" value="auto-redact" />
-      <span class="rdct-opt-text">
-        <span class="rdct-opt-label">Auto-redact silently</span>
-        <span class="rdct-opt-desc">No modal. Detected values are replaced with [LABEL_REDACTED] and a toast appears.</span>
-      </span>
+      <span class="rdct-opt-label">Auto-redact silently</span>
     </label>
   </section>
 
   <section class="rdct-section">
-    <h2 class="rdct-section-title">When emails, phones, or IPs are detected</h2>
+    <h2 class="rdct-section-title">When a warned type is detected</h2>
 
     <label class="rdct-opt">
       <input type="radio" name="warn" value="banner" />
-      <span class="rdct-opt-text">
-        <span class="rdct-opt-label">Show a dismissible banner</span>
-        <span class="rdct-opt-desc">Auto-dismisses; lets you see what was flagged without blocking.</span>
-      </span>
+      <span class="rdct-opt-label">Show a dismissible banner</span>
     </label>
-
     <label class="rdct-opt">
       <input type="radio" name="warn" value="silent" />
-      <span class="rdct-opt-text">
-        <span class="rdct-opt-label">Don't notify me</span>
-        <span class="rdct-opt-desc">Detections still logged to console, no UI shown.</span>
-      </span>
+      <span class="rdct-opt-label">Don't notify me</span>
     </label>
   </section>
 
   <footer class="rdct-footer">
-    <span>v0.3.0 · <code>Redact-NER-v3</code></span>
+    <span>v1.0.0 · <code>Redact NER v3.1</code></span>
     <a class="rdct-footer-link" id="rdct-reset">Reset defaults</a>
   </footer>
 `;
 
 const $  = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const $$ = (sel: string) => document.querySelectorAll(sel);
+
+function renderTierGrid(overrides: RedactSettings['tierOverrides']) {
+  const host = $('rdct-tier-grid');
+  host.innerHTML = TIER_CONFIGURABLE.map((label) => {
+    const tier = effectiveTier(label, overrides);
+    return `
+      <div class="rdct-tier-row" data-label="${label}">
+        <span class="rdct-tier-name">${PRETTY[label] ?? label}</span>
+        <div class="rdct-seg" role="radiogroup" aria-label="${PRETTY[label]} sensitivity">
+          <button type="button" class="rdct-seg-btn ${tier === 'block' ? 'is-active' : ''}" data-tier="block">Block</button>
+          <button type="button" class="rdct-seg-btn ${tier === 'warn'  ? 'is-active' : ''}" data-tier="warn">Warn</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
 
 async function refresh() {
   const s = await loadSettings();
@@ -110,12 +125,11 @@ async function refresh() {
   status.classList.toggle('is-off', !s.enabled);
   statusText.textContent = s.enabled ? 'Active' : 'Off';
 
-  const host = window.location.hostname || 'all sites';
-  $('rdct-host').textContent = `On every supported site`;
-
   for (const r of $$('input[name="block"]')) (r as HTMLInputElement).checked = (r as HTMLInputElement).value === s.blockBehavior;
   for (const r of $$('input[name="warn"]'))  (r as HTMLInputElement).checked = (r as HTMLInputElement).value === s.warnBehavior;
   $<HTMLInputElement>('rdct-cooldown').value = String(s.cooldownMinutes);
+
+  renderTierGrid(s.tierOverrides || {});
 }
 
 function bind() {
@@ -149,6 +163,28 @@ function bind() {
     e.preventDefault();
     await saveSettings(DEFAULTS);
     refresh();
+  });
+
+  // Per-type tier segmented buttons. Delegate from the grid container — rows
+  // are rerendered on every refresh, so handlers attached per-button would leak.
+  $('rdct-tier-grid').addEventListener('click', async (e) => {
+    const btn = (e.target as HTMLElement).closest('.rdct-seg-btn') as HTMLButtonElement | null;
+    if (!btn) return;
+    const row = btn.closest('.rdct-tier-row') as HTMLElement;
+    const label = row.dataset.label!;
+    const tier = btn.dataset.tier as Tier;
+
+    const s = await loadSettings();
+    const next = { ...(s.tierOverrides || {}) };
+    // Only persist an override when it differs from the built-in default;
+    // matching the default → delete the override so future default changes propagate.
+    if (NER_TIER[label] === tier) {
+      delete next[label];
+    } else {
+      next[label] = tier;
+    }
+    await saveSettings({ tierOverrides: next });
+    renderTierGrid(next);
   });
 }
 

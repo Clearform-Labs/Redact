@@ -122,12 +122,21 @@ export function showWarnBanner(warnHits: DetectionSpan[], autoDismissMs?: number
   attachHoverPause(el, dismissMs, () => el.remove());
 }
 
-export function removeWarnBanner(): void {
+function removeWarnBanner(): void {
   document.getElementById(STYLE_PREFIX + 'warn')?.remove();
 }
 
-// ── Auto-redact toast (bottom-right) ─────────────────────────────────────────
-export function showRedactionToast(blockHits: DetectionSpan[]): Promise<'undo' | 'dismissed'> {
+// ── Auto-redact toast (informational, non-blocking) ─────────────────────────
+// Shown after the redacted text has been inserted into the chat input. Lists
+// what was caught; clicking the toast opens the details modal if there are
+// more items than the chip preview shows.
+//
+// No Undo button: reliably reverting an insertion across the editor variants
+// we support (Lexical / ProseMirror / plain contenteditable / textarea) turns
+// out to require fragile DOM tracking that breaks when the host editor
+// remounts mid-window. If the user wants the unredacted text through, they
+// can switch to "Quick prompt" or "Full-screen block" mode in the popup.
+export function showRedactionToast(blockHits: DetectionSpan[]): void {
   const el = document.createElement('div');
   el.className = STYLE_PREFIX + 'toast ' + STYLE_PREFIX + 'toast-block';
 
@@ -137,44 +146,39 @@ export function showRedactionToast(blockHits: DetectionSpan[]): Promise<'undo' |
        <code class="${STYLE_PREFIX}chip-value">${escapeHtml(maskValue(h.value))}</code>
      </div>`
   ).join('');
-  const more = blockHits.length > 3 ? `<div class="${STYLE_PREFIX}toast-more">…and ${blockHits.length - 3} more — click to see all</div>` : '';
+  const more = blockHits.length > 3
+    ? `<div class="${STYLE_PREFIX}toast-more">…and ${blockHits.length - 3} more — click to see all</div>`
+    : '';
 
   el.innerHTML = `
     <div class="${STYLE_PREFIX}toast-header">
       <span class="${STYLE_PREFIX}toast-icon">🚫</span>
       <strong>Auto-redacted ${blockHits.length} item${blockHits.length === 1 ? '' : 's'}</strong>
-      <button class="${STYLE_PREFIX}toast-undo">Undo</button>
+      <button class="${STYLE_PREFIX}toast-close" aria-label="Dismiss">×</button>
     </div>
     <div class="${STYLE_PREFIX}toast-list">${items}${more}</div>
   `;
 
-  return new Promise((resolve) => {
-    el.querySelector<HTMLButtonElement>(`.${STYLE_PREFIX}toast-undo`)!.onclick = (e) => {
-      e.stopPropagation();
+  el.querySelector<HTMLButtonElement>(`.${STYLE_PREFIX}toast-close`)!.onclick = (e) => {
+    e.stopPropagation();
+    el.remove();
+  };
+
+  if (blockHits.length > 3) {
+    el.style.cursor = 'pointer';
+    el.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).closest(`.${STYLE_PREFIX}toast-close`)) return;
       el.remove();
-      resolve('undo');
-    };
-    if (blockHits.length > 3) {
-      el.style.cursor = 'pointer';
-      el.addEventListener('click', (e) => {
-        if ((e.target as HTMLElement).closest(`.${STYLE_PREFIX}toast-undo`)) return;
-        el.remove();
-        showDetailsModal(blockHits, 'These items were redacted from your paste');
-        resolve('dismissed');
-      });
-    }
-    document.body.appendChild(el);
-    attachHoverPause(el, defaultAutoDismissMs(blockHits.length), () => {
-      if (el.isConnected) {
-        el.remove();
-        resolve('dismissed');
-      }
+      showDetailsModal(blockHits, 'These items were redacted from your paste');
     });
-  });
+  }
+
+  document.body.appendChild(el);
+  attachHoverPause(el, defaultAutoDismissMs(blockHits.length), () => el.remove());
 }
 
 // ── Block modal (interactive — user must choose) ─────────────────────────────
-export function showBlockModal(text: string, blockHits: DetectionSpan[]): Promise<'cancel' | 'redact' | 'send-anyway'> {
+export function showBlockModal(blockHits: DetectionSpan[]): Promise<'cancel' | 'redact' | 'send-anyway'> {
   return new Promise((resolve) => {
     const modal = document.createElement('div');
     modal.className = STYLE_PREFIX + 'modal-backdrop';
@@ -211,6 +215,54 @@ export function showBlockModal(text: string, blockHits: DetectionSpan[]): Promis
       if (e.target === modal) close('cancel');
     });
     document.body.appendChild(modal);
+  });
+}
+
+// ── Block inline-confirm (compact corner card, less invasive than modal) ───
+// Same decision set as showBlockModal — cancel / redact / send-anyway — but
+// renders as a top-center card without a fullscreen backdrop, so the host page
+// remains interactive. Picked via `blockBehavior: 'inline-confirm'`.
+export function showBlockInlineConfirm(blockHits: DetectionSpan[]): Promise<'cancel' | 'redact' | 'send-anyway'> {
+  return new Promise((resolve) => {
+    // Remove any prior inline-confirm so we never stack two
+    document.getElementById(STYLE_PREFIX + 'inline-confirm')?.remove();
+
+    const el = document.createElement('div');
+    el.id = STYLE_PREFIX + 'inline-confirm';
+    el.className = STYLE_PREFIX + 'inline-confirm';
+
+    const items = blockHits.slice(0, 3).map((h) =>
+      `<div class="${STYLE_PREFIX}toast-item">
+         <span class="${STYLE_PREFIX}chip-label">${escapeHtml(prettyLabel(h.label))}</span>
+         <code class="${STYLE_PREFIX}chip-value">${escapeHtml(maskValue(h.value))}</code>
+       </div>`
+    ).join('');
+    const more = blockHits.length > 3
+      ? `<div class="${STYLE_PREFIX}toast-more">…and ${blockHits.length - 3} more</div>`
+      : '';
+
+    el.innerHTML = `
+      <div class="${STYLE_PREFIX}inline-header">
+        <span class="${STYLE_PREFIX}toast-icon">🚫</span>
+        <strong>${blockHits.length} sensitive item${blockHits.length === 1 ? '' : 's'} detected</strong>
+      </div>
+      <div class="${STYLE_PREFIX}toast-list">${items}${more}</div>
+      <div class="${STYLE_PREFIX}inline-actions">
+        <button class="${STYLE_PREFIX}btn ${STYLE_PREFIX}btn-cancel">Cancel</button>
+        <button class="${STYLE_PREFIX}btn ${STYLE_PREFIX}btn-redact">Redact &amp; paste</button>
+        <button class="${STYLE_PREFIX}btn ${STYLE_PREFIX}btn-confirm">Send anyway</button>
+      </div>
+    `;
+
+    const close = (decision: 'cancel' | 'redact' | 'send-anyway') => {
+      el.remove();
+      resolve(decision);
+    };
+    el.querySelector<HTMLButtonElement>(`.${STYLE_PREFIX}btn-cancel`)!.onclick = () => close('cancel');
+    el.querySelector<HTMLButtonElement>(`.${STYLE_PREFIX}btn-redact`)!.onclick = () => close('redact');
+    el.querySelector<HTMLButtonElement>(`.${STYLE_PREFIX}btn-confirm`)!.onclick = () => close('send-anyway');
+
+    document.body.appendChild(el);
   });
 }
 
