@@ -24,8 +24,8 @@ export const NER_TIER: Record<string, Tier> = {
   CREDENTIAL: 'block',
   SSN: 'block',
   CREDIT_CARD: 'block',
-  EMAIL: 'warn',
-  PHONE: 'warn',
+  EMAIL: 'block',
+  PHONE: 'block',
 };
 
 export const BLOCK_PATTERNS: Array<{ re: RegExp; label: string; desc: string }> = [
