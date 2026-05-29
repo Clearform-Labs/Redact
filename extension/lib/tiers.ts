@@ -20,12 +20,15 @@ export interface DetectionSpan {
 }
 
 // Tier mapping for model labels. Anything not listed defaults to 'warn'.
+// Block secrets and financial identifiers (interactive prompt), warn on PII
+// that's lower-stakes to leak (auto-dismissing banner). Users can override
+// any per-type default from the popup.
 export const NER_TIER: Record<string, Tier> = {
   CREDENTIAL: 'block',
   SSN: 'block',
   CREDIT_CARD: 'block',
-  EMAIL: 'block',
-  PHONE: 'block',
+  EMAIL: 'warn',
+  PHONE: 'warn',
 };
 
 export const BLOCK_PATTERNS: Array<{ re: RegExp; label: string; desc: string }> = [
