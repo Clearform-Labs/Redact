@@ -27,6 +27,12 @@ export default defineContentScript({
     // Re-bind to a non-null const so closures below don't lose narrowing.
     const adapter: SiteAdapter = found;
 
+    // Minimum paste length that triggers detection. Set low enough that short
+    // PII (SSN ~11 chars, phone ~12 chars, short emails ~10 chars) still gets
+    // scanned. The lower bound exists to avoid spinning up the worker for
+    // one-word pastes like "yes" or "ok".
+    const MIN_PASTE_LENGTH = 8;
+
     // ── Worker setup ────────────────────────────────────────────────────────
     // MV3 quirk: a content script can't construct a Worker pointing at a
     // chrome-extension:// URL — Chrome blocks it as cross-origin. The
@@ -135,9 +141,9 @@ export default defineContentScript({
     }
     async function processPasteText(pastedText: string): Promise<ProcessResult | null> {
       const settings = await effectiveSettings(location.hostname);
-      if (!settings.enabled) return pastedText;
+      if (!settings.enabled) return { text: pastedText };
 
-      if (!pastedText || pastedText.length < 20) return pastedText;
+      if (!pastedText || pastedText.length < MIN_PASTE_LENGTH) return { text: pastedText };
 
       showLoadingIndicator();
       let detections: DetectionSpan[] = [];
@@ -226,7 +232,7 @@ export default defineContentScript({
       if (!e.isTrusted) return;
 
       const text = e.clipboardData?.getData('text') || '';
-      if (text.length < 20) return;
+      if (text.length < MIN_PASTE_LENGTH) return;
       e.preventDefault();
       e.stopImmediatePropagation();
 
@@ -243,7 +249,7 @@ export default defineContentScript({
       if (e.inputType !== 'insertFromPaste') return;
 
       const text = (e as any).data || e.dataTransfer?.getData('text') || '';
-      if (text.length < 20) return;
+      if (text.length < MIN_PASTE_LENGTH) return;
       e.preventDefault();
       e.stopImmediatePropagation();
 
