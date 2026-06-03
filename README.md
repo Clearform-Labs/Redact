@@ -2,6 +2,8 @@
 
 On-device neural redaction for safe LLM pasting. A Chrome extension that catches sensitive content in pasted text **before** it reaches ChatGPT, Claude, or Gemini — entirely in-browser, nothing leaves your machine.
 
+**Website:** [redact.clearformlabs.com](https://redact.clearformlabs.com)
+
 ## Design principle
 
 Redacting too aggressively is worse than redacting too little. If we strip file paths, function names, library names, or error messages from a stack trace, the LLM has nothing left to debug with — the product becomes useless. Every label the model detects has to pass one test: **redacting it should never destroy useful debugging context.**
