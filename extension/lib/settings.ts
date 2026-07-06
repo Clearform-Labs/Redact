@@ -1,5 +1,5 @@
-// User-configurable behavior. Stored in chrome.storage.sync so it follows
-// the user across devices.
+// User-configurable behavior. Stored in chrome.storage.local — never synced
+// to any cloud account, keeping all data entirely on-device.
 
 import type { Tier } from './tiers';
 
@@ -47,12 +47,12 @@ function migrate(stored: Record<string, unknown>): Record<string, unknown> {
 }
 
 export async function loadSettings(): Promise<RedactSettings> {
-  const stored = await browser.storage.sync.get(Object.keys(DEFAULTS));
+  const stored = await browser.storage.local.get(Object.keys(DEFAULTS));
   return { ...DEFAULTS, ...migrate(stored) } as RedactSettings;
 }
 
 export async function saveSettings(settings: Partial<RedactSettings>): Promise<void> {
-  await browser.storage.sync.set(settings);
+  await browser.storage.local.set(settings);
 }
 
 export async function effectiveSettings(hostname: string): Promise<RedactSettings> {
